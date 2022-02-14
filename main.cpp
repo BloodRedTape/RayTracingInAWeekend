@@ -7,10 +7,33 @@
 #include "math.hpp"
 #include "hittable.cpp"
 
+#include <thread>
+
 constexpr float ViewportHeight = 2;
 
+struct Camera {
+    const float Aspect;
+    const float ViewportHeight;
+    const float ViewportWidth;
+    const float FocalLength;
+    const Vector3f RayOrigin;
+    const Vector3f LowerLeftCorner;
+    const Vector3f ViewportSize;
 
+    Camera(int width, int height) :
+	    Aspect(width / (float)height),
+        ViewportHeight(2),
+        ViewportWidth(ViewportHeight * Aspect),
+        FocalLength(1.f),
+        RayOrigin(0, 0, 0),
+        LowerLeftCorner(-ViewportWidth/2.f, -ViewportHeight/2.f, 0),
+        ViewportSize(ViewportWidth, ViewportHeight, 0)
+    {}
 
+    Ray3f GenRay(float u, float v) const{
+        return {RayOrigin, LowerLeftCorner + Vector3f(u, v, 0) * ViewportSize - Vector3f(0, 0, FocalLength)};
+    }
+};
 
 void Set(Image &image, Color color, size_t x, size_t y){
     image.Set(color, x, image.Height() - y - 1);
@@ -35,46 +58,84 @@ Color RayColor(const Ray3f &ray, const HittableList &list, float depth){
     return Lerp(Color::White, Color(0.5, 0.7, 1.f, 1.f), v);
 }
 
+class RayTracer {
+private:
+    const Camera m_Camera; 
+    std::vector<std::thread> m_Pool;
+    const size_t m_ChunksCount;
+    const size_t m_ChunkSize;
+    const size_t m_ImageWidth;
+    const size_t m_ImageHeight;
+    HittableList m_List;
 
-void Trace(Image &image){
-    const float aspect = image.Width() / float(image.Height());
-    const float viewport_height = ViewportHeight;
-    const float viewport_width  = viewport_height * aspect;
-    const float focal_length = 1.0f;
-    const Vector3f ray_origin{0, 0, 0};
-    const Vector3f lower_left_corner = Vector3f(-viewport_width/2, -viewport_height/2, 0);
-    const Vector3f viewport_size{viewport_width, viewport_height, 0};
+    struct Chunk{
+        size_t ID = 0;
+        size_t Begin = 0;
+        size_t End = 0;
+        Image *Output = nullptr;
+        const HittableList *List = nullptr;
+        const Camera *Camera = nullptr;
+    };
+public:
+    RayTracer(int width, int height) :
+        m_Camera(width, height),
+        m_ChunksCount(std::thread::hardware_concurrency()),
+        m_ChunkSize(height / m_ChunksCount),
+        m_ImageWidth(width),
+        m_ImageHeight(height)
+    {
+        SX_ASSERT(height % m_ChunksCount == 0);
 
+        m_Pool.reserve(m_ChunksCount);
 
-    HittableList list;
-    list.Add(new Sphere({0, 0, -1}, 0.5));
-    //list.Add(new Sphere({0,-100.5,-1}, 100));
-    list.Add(new Sphere({0, -100.5, -1}, 100));
-
-    for(int y = 0; y<image.Height(); y++){
-        for(int x = 0; x<image.Width(); x++){
-            Vector2f uv(x/(image.Width() - 1.f), y/(image.Height() - 1.f));
-
-            Ray3f ray{ray_origin, lower_left_corner + Vector3f(uv.x, uv.y, 0) * viewport_size - Vector3f(0, 0, focal_length)};
-
-            Color pixel = RayColor(ray, list, 40);
-
-            Set(image, pixel, x, y);
-        }
+        m_List.Add(new Sphere({ 0, 0, -1 }, 0.5));
+        m_List.Add(new Sphere({ 0, -100.5, -1 }, 100));
+        
     }
-}
+
+    Image Trace() {
+        Image output(m_ImageWidth, m_ImageHeight);
+
+        for(int i = 0; i<m_ChunksCount; i++){
+            Chunk chunk;
+            chunk.ID = i;
+            chunk.Begin = m_ChunkSize * i;
+            chunk.End = chunk.Begin + m_ChunkSize;
+            chunk.Output = &output;
+            chunk.List = &m_List;
+            chunk.Camera = &m_Camera;
+            m_Pool.emplace_back(ChunkTrace, chunk);
+        }
+
+        for(auto &thread: m_Pool)
+            thread.join();
+
+        return output;
+    }
+
+private:
+    static void ChunkTrace(Chunk chunk) {
+        Image &image = *chunk.Output;
+        const Camera &camera = *chunk.Camera;
+        const HittableList &list = *chunk.List;
+
+        for (int y = chunk.Begin; y < chunk.End; y++) {
+            for(int x = 0; x < image.Width(); x++){
+                Color pixel = Color::Transparent;
+                Vector2f uv(x/(image.Width() - 1.f), y/(image.Height() - 1.f));
+                Ray3f ray = camera.GenRay(uv.x, uv.y);
+
+			    pixel = RayColor(ray, list, 40);
+                Set(image, pixel, x, y);
+            }
+        }
+
+    }
+};
+
+
+
 
 int StraitXMain(Span<const char*> args){
-    Image image(1920, 1080);
-
-    Clock cl;
-    Trace(image);
-
-    Println("Tracing took: % ms", cl.Restart().AsMilliseconds());
-
-    Result res = image.SaveToFile("output.jpg");
-
-    Println("Saving  took: % ms", cl.Restart().AsMilliseconds());
-
-    return 0;
+    return !RayTracer(1280, 720).Trace().SaveToFile("output.jpg");
 }
