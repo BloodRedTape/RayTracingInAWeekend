@@ -8,9 +8,13 @@ struct HitRecord{
     float T = 0.f;
 };
 
+bool InRange(float value, float min, float max) {
+    return value >= min && value <= max;
+}
+
 class Hittable{
 public:
-    virtual Optional<HitRecord> Hit(const Ray3f &ray)const = 0;
+    virtual Optional<HitRecord> Hit(const Ray3f &ray, float min_t, float max_t)const = 0;
 };
 
 using HittableRef = UniquePtr<Hittable>;
@@ -25,7 +29,7 @@ public:
         m_Radius(radius)
     {}
 
-    Optional<HitRecord> Hit(const Ray3f &r)const override{
+    Optional<HitRecord> Hit(const Ray3f &r, float min_t, float max_t)const override{
         Vector3f o = r.Origin() - m_Position;
         float a = Dot(r.Direction(), r.Direction());
         float b = 2*Dot(o, r.Direction());
@@ -34,23 +38,36 @@ public:
         float d = b*b - 4*a*c;
         if(d < 0)
             return {};
-
-        float t = float(-b - Math::Sqrt(d)) / (2.0f * a);
+        
+        float t1 = float(-b + Math::Sqrt(d)) / (2.0f * a);
+        float t2 = float(-b - Math::Sqrt(d)) / (2.0f * a);
+        
+        float t = t2;
+        if (!InRange(t, min_t, max_t)) {
+            t = t1;
+            if(!InRange(t, min_t, max_t))
+                return {};
+        }
 
         return {{Normalize(r.At(t) - m_Position), t}};
     }
 };
 
-class HittableList: public List<HittableRef>, public Hittable{
+class HittableList: public List<HittableRef>{
 public:
-    Optional<HitRecord> Hit(const Ray3f &r)const override{
+    Optional<HitRecord> Hit(const Ray3f &r, float min_t, float max_t)const{
         Optional<HitRecord> best;
+        float shortest_t = INFINITY;
 
         for(const auto &hittable: *this){
-            auto result = hittable->Hit(r);
+            auto result = hittable->Hit(r, 0, shortest_t);
 
-            if(!best.HasValue() || (result.HasValue() && best.Value().T > result.Value().T))
-                best = result; 
+            if (result.HasValue()) {
+                SX_ASSERT(result.Value().T >= 0 && result.Value().T <= shortest_t);
+
+                shortest_t = result.Value().T;
+                best = result;
+            }
         }
         return best;
     }
