@@ -36,7 +36,7 @@ public:
         float c = Dot(o, o) - (m_Radius * m_Radius);
 
         float d = b*b - 4*a*c;
-        if(d < 0)
+        if(d <= 0)
             return {};
         
         float t1 = float(-b + Math::Sqrt(d)) / (2.0f * a);

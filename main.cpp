@@ -60,6 +60,8 @@ Color RayColor(const Ray3f &ray, const HittableList &list, float depth){
 
 class RayTracer {
 private:
+    static constexpr size_t s_SamplesCount = 6;
+
     const Camera m_Camera; 
     std::vector<std::thread> m_Pool;
     const size_t m_ChunksCount;
@@ -121,11 +123,16 @@ private:
 
         for (int y = chunk.Begin; y < chunk.End; y++) {
             for(int x = 0; x < image.Width(); x++){
-                Color pixel = Color::Transparent;
-                Vector2f uv(x/(image.Width() - 1.f), y/(image.Height() - 1.f));
-                Ray3f ray = camera.GenRay(uv.x, uv.y);
+                Color pixel = Color::Black;
 
-			    pixel = RayColor(ray, list, 40);
+                for(int i = 0; i < s_SamplesCount; i++){
+                
+                    Vector2f uv((x + RandomFloat())/(image.Width() - 1.f), (y + RandomFloat())/(image.Height() - 1.f));
+                    Ray3f ray = camera.GenRay(uv.x, uv.y);
+
+			        pixel = pixel + RayColor(ray, list, 40) * (1.f / s_SamplesCount);
+                }
+                pixel.A = 1.f;
                 Set(image, pixel, x, y);
             }
         }
@@ -137,5 +144,10 @@ private:
 
 
 int StraitXMain(Span<const char*> args){
-    return !RayTracer(1280, 720).Trace().SaveToFile("output.jpg");
+    Clock cl;
+    Image image = RayTracer(1280, 720).Trace();
+    Println("Trace took: % seconds", cl.Restart().AsSeconds());
+    image.SaveToFile("output.jpg");
+    Println("Saving took: % seconds", cl.Restart().AsSeconds());
+    return 0;
 }
